@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Kanban Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lucide-static@latest/umd/lucide.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1/plugin/relativeTime.js"></script>
+    <script>dayjs.extend(dayjs_plugin_relativeTime)</script>
+
+    <style>
+        /* Custom scrollbar for columns */
+        .kanban-column::-webkit-scrollbar { width: 6px; }
+        .kanban-column::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 10px; }
+        .kanban-column::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .kanban-column::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Dragging styles */
+        .dragging { opacity: 0.4; border: 2px dashed #60a5fa; /* Brighter blue dashed border */ transform: rotate(3deg); }
+        .drag-over { background-color: rgba(59, 130, 246, 0.1); border: 2px dashed #93c5fd; }
+
+        /* General body styling */
+        html, body { height: 100%; margin: 0; font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        body { display: flex; flex-direction: column; align-items: center; }
+
+        /* Confetti canvas */
+        #confetti-canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 9999; }
+
+        /* Hide elements */
+        .hidden { display: none; }
+
+        /* Modal styles */
+        .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.6); z-index: 100; display: flex; align-items: center; justify-content: center; }
+        .modal-content { background-color: white; padding: 1.5rem 2rem; border-radius: 0.75rem; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); z-index: 101; width: 90%; max-width: 500px; max-height: 90vh; overflow-y: auto; }
+
+        /* Priority indicators */
+        .priority-low { border-left: 5px solid #22c55e; /* Green */ }
+        .priority-medium { border-left: 5px solid #f59e0b; /* Amber */ }
+        .priority-high { border-left: 5px solid #ef4444; /* Red */ }
+
+         /* Task card styling */
+        .task-card {
+            background-color: white;
+            padding: 0.75rem; /* Reduced padding slightly */
+            border-radius: 0.5rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.07), 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+            margin-bottom: 0.75rem;
+            cursor: grab;
+            border: 1px solid #e5e7eb;
+            transition: box-shadow 0.2s ease-in-out, transform 0.1s ease-in-out;
+            position: relative; /* Needed for absolute positioned elements like controls */
+        }
+        .task-card:hover {
+             box-shadow: 0 4px 8px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+             transform: translateY(-2px);
+        }
+        .task-controls {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            display: flex;
+            gap: 0.25rem; /* space-x-1 */
+            background-color: rgba(255, 255, 255, 0.8); /* Slight background for visibility */
+            padding: 0.1rem 0.2rem;
+            border-radius: 0.25rem;
+            opacity: 0; /* Hidden by default */
+            transition: opacity 0.2s ease;
+        }
+        .task-card:hover .task-controls {
+            opacity: 1; /* Show on hover */
+        }
+        .task-controls button {
+            background: none; border: none; padding: 0.15rem; cursor: pointer; color: #6b7280; /* gray-500 */
+        }
+         .task-controls button:hover { color: #1f2937; /* gray-800 */ }
+         .task-text { font-weight: 500; margin-bottom: 0.5rem; /* mb-2 */ display: block; /* Ensure it takes block space */ padding-right: 3rem; /* Space for controls */ word-break: break-word; }
+         .task-details { font-size: 0.8rem; color: #4b5563; /* gray-600 */ display: flex; flex-wrap: wrap; gap: 0.75rem; /* gap-3 */ align-items: center; }
+         .task-tag { background-color: #e0e7ff; /* indigo-100 */ color: #4338ca; /* indigo-800 */ padding: 0.1rem 0.5rem; border-radius: 9999px; /* rounded-full */ font-size: 0.7rem; font-weight: 500; }
+         .task-due-date { display: flex; align-items: center; gap: 0.25rem; /* space-x-1 */ }
+         .task-due-date.overdue { color: #dc2626; /* red-600 */ font-weight: 500; }
+         .task-image-thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 0.25rem; /* rounded */ border: 1px solid #e5e7eb; cursor: pointer; }
+         .task-image-thumb-placeholder { width: 40px; height: 40px; background-color: #f3f4f6; /* gray-100 */ border-radius: 0.25rem; display: flex; align-items: center; justify-content: center; color: #9ca3af; /* gray-400 */ border: 1px solid #e5e7eb; }
+
+        /* Quote styling */
+        #quote-section {
+            font-style: italic;
+            color: #4b5563; /* gray-600 */
+            text-align: center;
+            margin: 1rem 0 1.5rem 0;
+            padding: 0 1rem;
+            max-width: 600px;
+            transition: opacity 0.5s ease-in-out;
+        }
+         #quote-section.fade { opacity: 0; }
+
+         /* Clock styling */
+         #clock { font-size: 0.9rem; color: #6b7280; }
+
+         /* Search and Sort styling */
+         .controls-container { display: flex; flex-direction: column; sm:flex-direction: row; justify-content: space-between; align-items: center; gap: 0.5rem; /* gap-2 */ mb-4; }
+         .search-box { position: relative; }
+         .search-box input { padding-left: 2.5rem; /* pl-10 */ }
+         .search-box .icon { position: absolute; left: 0.75rem; /* left-3 */ top: 50%; transform: translateY(-50%); color: #9ca3af; /* gray-400 */ }
+         .sort-select { font-size: 0.875rem; /* text-sm */ }
+
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-slate-50">
+
+    <div id="auth-section" class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-xl mt-16 sm:mt-20">
+        <h2 id="auth-title" class="text-2xl font-bold text-center text-gray-900">Login</h2>
+        <div id="auth-error" class="text-red-600 text-sm text-center h-5"></div>
+        <form id="auth-form" class="space-y-4">
+            <div>
+                <label for="username" class="sr-only">Username</label>
+                <input type="text" id="username" placeholder="Username" required class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm">
+            </div>
+             <div>
+                <label for="password" class="sr-only">Password</label>
+                <input type="password" id="password" placeholder="Password (ignored for demo)" class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm">
+            </div>
+            <button type="submit" id="auth-submit-button" class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-md shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">Login</button>
+        </form>
+        <p class="text-sm text-center text-gray-600">
+            <span id="auth-switch-text">Don't have an account?</span>
+            <button id="auth-switch-button" class="font-medium text-blue-600 hover:text-blue-500">Sign Up</button>
+        </p>
+    </div>
+
+    <div id="app-section" class="hidden w-full px-2 sm:px-4 py-6">
+        <div class="flex flex-col sm:flex-row justify-between items-center mb-4 max-w-7xl mx-auto gap-2">
+             <h1 class="text-2xl sm:text-3xl font-bold text-gray-800">My Kanban Board</h1>
+             <div class="flex items-center gap-3 sm:gap-4">
+                 <div id="clock" class="text-sm text-gray-600"></div>
+                 <span id="welcome-user" class="text-gray-700 text-sm sm:text-base hidden sm:inline"></span>
+                 <button id="logout-button" title="Logout" class="bg-red-500 hover:bg-red-600 text-white font-semibold p-2 rounded-full shadow-md transition duration-150 ease-in-out text-sm flex items-center justify-center">
+                    <i data-lucide="log-out" class="w-4 h-4"></i>
+                 </button>
+             </div>
+        </div>
+
+        <div id="quote-section" class="text-sm italic text-gray-600 text-center my-4 mx-auto max-w-2xl px-4">
+            Loading quote...
+        </div>
+
+        <div class="mb-6 w-full max-w-7xl mx-auto bg-white p-4 rounded-lg shadow-md">
+             <div class="flex flex-col lg:flex-row gap-3 items-stretch">
+                 <input type="text" id="new-task-input" placeholder="Add a new task..." class="flex-grow p-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-0">
+                 <div class="flex flex-col sm:flex-row gap-3 lg:w-auto">
+                    <select id="new-task-priority" title="Set Priority" class="p-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
+                        <option value="low">Low</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="high">High</option>
+                    </select>
+                    <input type="date" id="new-task-due-date" title="Set Due Date" class="p-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-gray-500">
+                    <input type="text" id="new-task-tags" placeholder="Tags (comma-sep)" title="Add comma-separated tags" class="p-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm min-w-0">
+                    <input type="url" id="new-task-image-url" placeholder="Image URL (optional)" title="Add image URL" class="p-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm min-w-0">
+                 </div>
+                 <button id="add-task-button" class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-150 ease-in-out flex items-center justify-center gap-1 lg:w-auto">
+                    <i data-lucide="plus" class="w-4 h-4"></i> Add
+                 </button>
+             </div>
+             <p id="task-error-message" class="text-red-500 text-sm mt-2 h-4"></p> <div class="mt-4 pt-4 border-t border-gray-200">
+                 <div class="relative">
+                     <span class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
+                         <i data-lucide="search" class="w-5 h-5"></i>
+                     </span>
+                     <input type="search" id="search-input" placeholder="Search tasks by text or tag..." class="w-full p-2 pl-10 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                 </div>
+             </div>
+        </div>
+
+
+        <div class="flex flex-col md:flex-row gap-4 w-full max-w-7xl mx-auto">
+            <div id="todo" class="kanban-column bg-gray-100 p-4 rounded-lg shadow-inner flex-1 min-h-[400px] max-h-[70vh] overflow-y-auto" data-column-id="todo">
+                <div class="sticky top-0 bg-gray-100 z-10 py-2 mb-3 border-b border-gray-300">
+                    <div class="flex justify-between items-center mb-2">
+                        <h2 class="text-lg sm:text-xl font-semibold text-gray-700">To Do</h2>
+                        <span class="task-count bg-gray-300 text-gray-700 text-xs font-bold px-2 py-0.5 rounded-full">0</span>
+                    </div>
+                    <select class="sort-select w-full p-1 border border-gray-300 rounded text-xs text-gray-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" title="Sort tasks in this column">
+                        <option value="default">Default Order</option>
+                        <option value="priority-desc">Priority (High-Low)</option>
+                        <option value="priority-asc">Priority (Low-High)</option>
+                        <option value="due-date-asc">Due Date (Earliest First)</option>
+                        <option value="due-date-desc">Due Date (Latest First)</option>
+                        <option value="name-asc">Name (A-Z)</option>
+                    </select>
+                </div>
+                <div class="tasks-container min-h-[200px]"></div> </div>
+
+            <div id="inprogress" class="kanban-column bg-gray-100 p-4 rounded-lg shadow-inner flex-1 min-h-[400px] max-h-[70vh] overflow-y-auto" data-column-id="inprogress">
+                 <div class="sticky top-0 bg-gray-100 z-10 py-2 mb-3 border-b border-gray-300">
+                    <div class="flex justify-between items-center mb-2">
+                        <h2 class="text-lg sm:text-xl font-semibold text-amber-600">In Progress</h2>
+                        <span class="task-count bg-amber-200 text-amber-800 text-xs font-bold px-2 py-0.5 rounded-full">0</span>
+                    </div>
+                     <select class="sort-select w-full p-1 border border-gray-300 rounded text-xs text-gray-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" title="Sort tasks in this column">
+                        <option value="default">Default Order</option>
+                        <option value="priority-desc">Priority (High-Low)</option>
+                        <option value="priority-asc">Priority (Low-High)</option>
+                        <option value="due-date-asc">Due Date (Earliest First)</option>
+                        <option value="due-date-desc">Due Date (Latest First)</option>
+                        <option value="name-asc">Name (A-Z)</option>
+                    </select>
+                </div>
+                 <div class="tasks-container min-h-[200px]"></div>
+            </div>
+
+            <div id="done" class="kanban-column bg-gray-100 p-4 rounded-lg shadow-inner flex-1 min-h-[400px] max-h-[70vh] overflow-y-auto" data-column-id="done">
+                 <div class="sticky top-0 bg-gray-100 z-10 py-2 mb-3 border-b border-gray-300">
+                    <div class="flex justify-between items-center mb-2">
+                        <h2 class="text-lg sm:text-xl font-semibold text-green-600">Done</h2>
+                        <span class="task-count bg-green-200 text-green-800 text-xs font-bold px-2 py-0.5 rounded-full">0</span>
+                    </div>
+                    <select class="sort-select w-full p-1 border border-gray-300 rounded text-xs text-gray-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" title="Sort tasks in this column">
+                        <option value="default">Default Order</option>
+                        <option value="priority-desc">Priority (High-Low)</option>
+                        <option value="priority-asc">Priority (Low-High)</option>
+                        <option value="due-date-asc">Due Date (Earliest First)</option>
+                        <option value="due-date-desc">Due Date (Latest First)</option>
+                        <option value="name-asc">Name (A-Z)</option>
+                    </select>
+                </div>
+                 <div class="tasks-container min-h-[200px]"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="edit-modal" class="modal-backdrop hidden">
+        <div class="modal-content">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-semibold text-gray-900">Edit Task</h3>
+                <button id="close-edit-modal-button" class="text-gray-400 hover:text-gray-600">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
+            </div>
+            <input type="hidden" id="edit-task-id">
+            <div class="space-y-4">
+                <div>
+                    <label for="edit-task-text" class="block text-sm font-medium text-gray-700 mb-1">Task Description</label>
+                    <input type="text" id="edit-task-text" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+                <div>
+                    <label for="edit-task-priority" class="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+                    <select id="edit-task-priority" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+                 <div>
+                    <label for="edit-task-due-date" class="block text-sm font-medium text-gray-700 mb-1">Due Date</label>
+                    <input type="date" id="edit-task-due-date" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-600">
+                </div>
+                 <div>
+                    <label for="edit-task-tags" class="block text-sm font-medium text-gray-700 mb-1">Tags (comma-separated)</label>
+                    <input type="text" id="edit-task-tags" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+                 <div>
+                    <label for="edit-task-image-url" class="block text-sm font-medium text-gray-700 mb-1">Image URL</label>
+                    <input type="url" id="edit-task-image-url" placeholder="https://example.com/image.jpg" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
+                <button id="cancel-edit-button" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out">Cancel</button>
+                <button id="save-edit-button" class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="image-preview-modal" class="modal-backdrop hidden">
+         <div class="modal-content p-4 max-w-xl w-auto relative">
+              <button id="close-image-preview-button" class="absolute top-2 right-2 text-white bg-black bg-opacity-50 rounded-full p-1 hover:bg-opacity-75 z-20">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+             <img id="full-image-preview" src="" alt="Task Image Preview" class="max-w-full max-h-[80vh] block rounded">
+         </div>
+     </div>
+
+
+    <canvas id="confetti-canvas"></canvas>
+
+    <script>
+        // --- DOM Elements ---
+        const authSection = document.getElementById('auth-section');
+        const appSection = document.getElementById('app-section');
+        const authForm = document.getElementById('auth-form');
+        const authTitle = document.getElementById('auth-title');
+        const authSubmitButton = document.getElementById('auth-submit-button');
+        const authSwitchButton = document.getElementById('auth-switch-button');
+        const authSwitchText = document.getElementById('auth-switch-text');
+        const usernameInput = document.getElementById('username');
+        const authError = document.getElementById('auth-error');
+        const logoutButton = document.getElementById('logout-button');
+        const welcomeUserSpan = document.getElementById('welcome-user');
+        const clockElement = document.getElementById('clock');
+        const quoteElement = document.getElementById('quote-section');
+
+        const columns = document.querySelectorAll('.kanban-column');
+        const addTaskButton = document.getElementById('add-task-button');
+        const newTaskInput = document.getElementById('new-task-input');
+        const newTaskPriority = document.getElementById('new-task-priority');
+        const newTaskDueDate = document.getElementById('new-task-due-date');
+        const newTaskTags = document.getElementById('new-task-tags');
+        const newTaskImageUrl = document.getElementById('new-task-image-url');
+        const taskErrorMessage = document.getElementById('task-error-message');
+        const searchInput = document.getElementById('search-input');
+
+        const editModal = document.getElementById('edit-modal');
+        const editTaskIdInput = document.getElementById('edit-task-id');
+        const editTaskTextInput = document.getElementById('edit-task-text');
+        const editTaskPrioritySelect = document.getElementById('edit-task-priority');
+        const editTaskDueDateInput = document.getElementById('edit-task-due-date');
+        const editTaskTagsInput = document.getElementById('edit-task-tags');
+        const editTaskImageUrlInput = document.getElementById('edit-task-image-url');
+        const saveEditButton = document.getElementById('save-edit-button');
+        const cancelEditButton = document.getElementById('cancel-edit-button');
+        const closeEditModalButton = document.getElementById('close-edit-modal-button');
+
+        const imagePreviewModal = document.getElementById('image-preview-modal');
+        const fullImagePreview = document.getElementById('full-image-preview');
+        const closeImagePreviewButton = document.getElementById('close-image-preview-button');
+
+
+        // --- Confetti ---
+        const confettiCanvas = document.getElementById('confetti-canvas');
+        const myConfetti = confetti.create(confettiCanvas, { resize: true, useWorker: true });
+
+        // --- State ---
+        let draggedItem = null;
+        let isLoginMode = true;
+        let allTasks = []; // Holds all tasks for the current user, used for filtering/sorting
+
+        // --- Quotes ---
+        const quotes = [
+            { text: "The secret of getting ahead is getting started.", author: "Mark Twain" },
+            { text: "Don't watch the clock; do what it does. Keep going.", author: "Sam Levenson" },
+            { text: "The best way to predict the future is to create it.", author: "Peter Drucker" },
+            { text: "Focus on being productive instead of busy.", author: "Tim Ferriss" },
+            { text: "Either you run the day or the day runs you.", author: "Jim Rohn" },
+            { text: "Start where you are. Use what you have. Do what you can.", author: "Arthur Ashe" },
+            { text: "Well done is better than well said.", author: "Benjamin Franklin" }
+        ];
+        let quoteInterval;
+
+        function displayQuote() {
+            if (!quoteElement) return;
+            const randomIndex = Math.floor(Math.random() * quotes.length);
+            quoteElement.classList.add('fade');
+            setTimeout(() => {
+                quoteElement.innerHTML = `"${quotes[randomIndex].text}" <span class="block text-xs text-gray-500 mt-1">- ${quotes[randomIndex].author}</span>`;
+                quoteElement.classList.remove('fade');
+            }, 500); // Match timeout with CSS transition duration
+        }
+
+        function startQuoteRotation() {
+            displayQuote(); // Initial display
+            if (quoteInterval) clearInterval(quoteInterval); // Clear existing interval if any
+            quoteInterval = setInterval(displayQuote, 10000); // Change quote every 10 seconds
+        }
+         function stopQuoteRotation() {
+            if (quoteInterval) clearInterval(quoteInterval);
+        }
+
+        // --- Clock ---
+        let clockInterval;
+        function updateClock() {
+             if (!clockElement) return;
+             clockElement.textContent = dayjs().format('ddd, MMM D, YYYY h:mm:ss A');
+        }
+         function startClock() {
+             updateClock(); // Initial display
+             if (clockInterval) clearInterval(clockInterval);
+             clockInterval = setInterval(updateClock, 1000); // Update every second
+         }
+         function stopClock() {
+             if (clockInterval) clearInterval(clockInterval);
+         }
+
+
+        // --- Authentication ---
+        function checkLoginState() {
+            const loggedInUser = localStorage.getItem('kanbanUser');
+            if (loggedInUser) {
+                showApp(loggedInUser);
+            } else {
+                showAuth();
+            }
+            initializeLucideIcons(); // Always initialize icons
+        }
+
+        function showAuth() {
+            authSection.classList.remove('hidden');
+            appSection.classList.add('hidden');
+            updateAuthUI();
+            stopClock(); // Stop clock when logged out
+            stopQuoteRotation(); // Stop quotes when logged out
+        }
+
+        function showApp(username) {
+            authSection.classList.add('hidden');
+            appSection.classList.remove('hidden');
+            welcomeUserSpan.textContent = `Welcome, ${username}!`;
+            startClock(); // Start clock when logged in
+            startQuoteRotation(); // Start quotes when logged in
+            loadTasks(); // Load tasks for the logged-in user
+            initializeLucideIcons(); // Re-initialize icons after potential DOM changes
+        }
+
+        function updateAuthUI() {
+            authError.textContent = '';
+            usernameInput.value = '';
+            document.getElementById('password').value = '';
+            if (isLoginMode) {
+                authTitle.textContent = 'Login';
+                authSubmitButton.textContent = 'Login';
+                authSwitchText.textContent = "Don't have an account?";
+                authSwitchButton.textContent = 'Sign Up';
+            } else {
+                authTitle.textContent = 'Sign Up';
+                authSubmitButton.textContent = 'Sign Up';
+                authSwitchText.textContent = 'Already have an account?';
+                authSwitchButton.textContent = 'Login';
+            }
+        }
+
+        function handleAuthSubmit(event) {
+            event.preventDefault();
+            const username = usernameInput.value.trim();
+            authError.textContent = '';
+            if (!username) { authError.textContent = 'Username cannot be empty.'; return; }
+
+            const users = JSON.parse(localStorage.getItem('kanbanUsers') || '{}');
+            if (isLoginMode) {
+                if (users[username]) {
+                    localStorage.setItem('kanbanUser', username);
+                    showApp(username);
+                } else { authError.textContent = 'Username not found. Please sign up.'; }
+            } else {
+                if (users[username]) { authError.textContent = 'Username already exists. Please login.'; }
+                else {
+                    users[username] = {};
+                    localStorage.setItem('kanbanUsers', JSON.stringify(users));
+                    localStorage.setItem('kanbanUser', username);
+                    showApp(username);
+                }
+            }
+        }
+
+        function handleLogout() {
+            localStorage.removeItem('kanbanUser');
+            allTasks = []; // Clear task state
+            columns.forEach(col => {
+                const container = col.querySelector('.tasks-container');
+                if(container) container.innerHTML = ''; // Clear tasks from UI
+                updateTaskCount(col); // Reset counts
+            });
+            showAuth();
+        }
+
+        function switchAuthMode() { isLoginMode = !isLoginMode; updateAuthUI(); }
+
+        // --- Task Management ---
+
+        function getPriorityClass(priority) {
+            return `priority-${priority || 'medium'}`;
+        }
+        function getPriorityValue(priority) {
+             switch (priority) {
+                 case 'high': return 3;
+                 case 'medium': return 2;
+                 case 'low': return 1;
+                 default: return 0; // Should not happen
+             }
+         }
+
+        function createTaskElement(task) {
+            const taskElement = document.createElement('div');
+            taskElement.className = `task-card ${getPriorityClass(task.priority)}`;
+            taskElement.setAttribute('draggable', 'true');
+            taskElement.setAttribute('data-task-id', task.id);
+            taskElement.setAttribute('data-priority', task.priority || 'medium');
+            taskElement.setAttribute('data-due-date', task.dueDate || '');
+            taskElement.setAttribute('data-tags', (task.tags || []).join(','));
+            taskElement.setAttribute('data-image-url', task.imageUrl || '');
+            taskElement.setAttribute('data-text', task.text); // Store text for sorting
+
+            // Task Text
+            const textSpan = document.createElement('span');
+            textSpan.classList.add('task-text');
+            textSpan.textContent = task.text;
+            taskElement.appendChild(textSpan);
+
+            // Task Details Container
+            const detailsDiv = document.createElement('div');
+            detailsDiv.classList.add('task-details');
+
+            // Due Date
+            if (task.dueDate) {
+                const dueDateSpan = document.createElement('span');
+                dueDateSpan.classList.add('task-due-date');
+                const today = dayjs().startOf('day');
+                const dueDate = dayjs(task.dueDate);
+                let formattedDate = dueDate.format('MMM D');
+                let relativeTime = `(${dueDate.from(today)})`;
+
+                dueDateSpan.innerHTML = `<i data-lucide="calendar" class="w-3 h-3"></i> ${formattedDate} <span class="text-xs text-gray-500 ml-1">${relativeTime}</span>`;
+                dueDateSpan.title = `Due: ${dueDate.format('YYYY-MM-DD')}`;
+
+                if (dueDate.isBefore(today)) {
+                    dueDateSpan.classList.add('overdue');
+                    dueDateSpan.title += ' (Overdue)';
+                }
+                detailsDiv.appendChild(dueDateSpan);
+            }
+
+            // Tags
+            if (task.tags && task.tags.length > 0) {
+                const tagsContainer = document.createElement('div');
+                tagsContainer.classList.add('flex', 'flex-wrap', 'gap-1', 'mt-1');
+                task.tags.forEach(tag => {
+                    const tagSpan = document.createElement('span');
+                    tagSpan.classList.add('task-tag');
+                    tagSpan.textContent = tag;
+                    tagsContainer.appendChild(tagSpan);
+                });
+                detailsDiv.appendChild(tagsContainer);
+            }
+
+             // Image Thumbnail
+             if (task.imageUrl) {
+                 const imgThumb = document.createElement('img');
+                 imgThumb.src = task.imageUrl;
+                 imgThumb.alt = 'Task image thumbnail';
+                 imgThumb.classList.add('task-image-thumb', 'ml-auto'); // Push to the right
+                 imgThumb.title = 'Click to view full image';
+                 imgThumb.onclick = (e) => {
+                     e.stopPropagation(); // Prevent drag
+                     openImagePreview(task.imageUrl);
+                 };
+                 // Basic error handling for thumbnail
+                 imgThumb.onerror = function() {
+                     this.style.display = 'none'; // Hide broken image icon
+                     const placeholder = createPlaceholderIcon('image-off'); // Lucide icon name
+                     this.parentNode.replaceChild(placeholder, this);
+                 };
+                 detailsDiv.appendChild(imgThumb);
+             }
+
+
+            taskElement.appendChild(detailsDiv);
+
+
+            // Controls Div (Edit/Delete) - Appended last to be on top visually if needed
+            const controlsDiv = document.createElement('div');
+            controlsDiv.classList.add('task-controls');
+
+            const editButton = document.createElement('button');
+            editButton.title = 'Edit Task';
+            editButton.innerHTML = '<i data-lucide="pencil" class="w-3 h-3"></i>';
+            editButton.onclick = (e) => { e.stopPropagation(); openEditModal(task.id); };
+            controlsDiv.appendChild(editButton);
+
+            const deleteButton = document.createElement('button');
+            deleteButton.title = 'Delete Task';
+            deleteButton.innerHTML = '<i data-lucide="trash-2" class="w-3 h-3"></i>';
+            deleteButton.onclick = (e) => { e.stopPropagation(); deleteTask(task.id); };
+            controlsDiv.appendChild(deleteButton);
+
+            taskElement.appendChild(controlsDiv);
+
+            // Add drag event listeners
+            taskElement.addEventListener('dragstart', handleDragStart);
+            taskElement.addEventListener('dragend', handleDragEnd);
+
+            return taskElement;
+        }
+
+        // Helper to create placeholder icons
+        function createPlaceholderIcon(iconName) {
+             const placeholder = document.createElement('div');
+             placeholder.classList.add('task-image-thumb-placeholder', 'ml-auto');
+             placeholder.innerHTML = `<i data-lucide="${iconName}" class="w-5 h-5"></i>`;
+             return placeholder;
+         }
+
+
+        function addTask() {
+            const taskText = newTaskInput.value.trim();
+            const taskPriority = newTaskPriority.value;
+            const taskDueDate = newTaskDueDate.value || null; // Store as null if empty
+            const taskTags = newTaskTags.value.trim() ? newTaskTags.value.split(',').map(tag => tag.trim()).filter(tag => tag) : [];
+            const taskImageUrl = newTaskImageUrl.value.trim() || null;
+            taskErrorMessage.textContent = '';
+
+            if (taskText === '') { taskErrorMessage.textContent = 'Task description cannot be empty.'; return; }
+
+            // Basic URL validation (optional but recommended)
+             if (taskImageUrl && !isValidHttpUrl(taskImageUrl)) {
+                 taskErrorMessage.textContent = 'Please enter a valid image URL (starting with http/https).';
+                 return;
+             }
+
+
+            const newTask = {
+                id: `task-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                text: taskText,
+                column: 'todo',
+                priority: taskPriority,
+                dueDate: taskDueDate,
+                tags: taskTags,
+                imageUrl: taskImageUrl,
+                createdAt: Date.now() // Store creation time for default sort
+            };
+
+            allTasks.push(newTask); // Add to master list
+            renderTasks(); // Re-render all tasks (handles filtering/sorting)
+
+            // Clear inputs
+            newTaskInput.value = '';
+            newTaskPriority.value = 'medium';
+            newTaskDueDate.value = '';
+            newTaskTags.value = '';
+            newTaskImageUrl.value = '';
+
+            saveTasks(); // Save state
+        }
+
+         function deleteTask(taskId) {
+             // Remove from the master list
+             allTasks = allTasks.filter(task => task.id !== taskId);
+             // Remove from UI immediately
+            const taskElement = document.querySelector(`[data-task-id="${taskId}"]`);
+            if (taskElement) {
+                const column = taskElement.closest('.kanban-column');
+                taskElement.remove();
+                if (column) updateTaskCount(column); // Update count after removal
+            }
+            saveTasks();
+            // No need to call renderTasks() here as we removed manually
+        }
+
+        // --- Edit Task Modal ---
+        function openEditModal(taskId) {
+             const task = allTasks.find(t => t.id === taskId);
+             if (!task) return;
+
+            editTaskIdInput.value = task.id;
+            editTaskTextInput.value = task.text;
+            editTaskPrioritySelect.value = task.priority || 'medium';
+            editTaskDueDateInput.value = task.dueDate || '';
+            editTaskTagsInput.value = (task.tags || []).join(', ');
+            editTaskImageUrlInput.value = task.imageUrl || '';
+            editModal.classList.remove('hidden');
+            initializeLucideIcons(); // Ensure modal icons are rendered
+        }
+
+        function closeEditModal() {
+            editModal.classList.add('hidden');
+        }
+
+        function saveTaskChanges() {
+            const taskId = editTaskIdInput.value;
+            const newText = editTaskTextInput.value.trim();
+            const newPriority = editTaskPrioritySelect.value;
+            const newDueDate = editTaskDueDateInput.value || null;
+            const newTags = editTaskTagsInput.value.trim() ? editTaskTagsInput.value.split(',').map(tag => tag.trim()).filter(tag => tag) : [];
+            const newImageUrl = editTaskImageUrlInput.value.trim() || null;
+
+            if (!newText) { alert("Task description cannot be empty."); return; }
+             if (newImageUrl && !isValidHttpUrl(newImageUrl)) {
+                 alert('Please enter a valid image URL (starting with http/https).');
+                 return;
+             }
+
+
+             // Find and update the task in the master list
+             const taskIndex = allTasks.findIndex(t => t.id === taskId);
+             if (taskIndex > -1) {
+                 allTasks[taskIndex] = {
+                     ...allTasks[taskIndex], // Keep original column, id, createdAt
+                     text: newText,
+                     priority: newPriority,
+                     dueDate: newDueDate,
+                     tags: newTags,
+                     imageUrl: newImageUrl
+                 };
+                 saveTasks();
+                 renderTasks(); // Re-render tasks to reflect changes
+                 closeEditModal();
+             } else {
+                 console.error("Could not find task to update:", taskId);
+                 closeEditModal();
+             }
+        }
+
+         // --- Image Preview Modal ---
+         function openImagePreview(imageUrl) {
+             if (!imageUrl) return;
+             fullImagePreview.src = imageUrl;
+             imagePreviewModal.classList.remove('hidden');
+             initializeLucideIcons(); // Ensure close icon is rendered
+         }
+
+         function closeImagePreview() {
+             imagePreviewModal.classList.add('hidden');
+             fullImagePreview.src = ''; // Clear src
+         }
+
+        // --- Drag and Drop Functionality ---
+        function handleDragStart(event) {
+            if (event.target.closest('button, img')) { event.preventDefault(); return; } // Prevent drag on buttons/images
+            draggedItem = event.target;
+            setTimeout(() => event.target.classList.add('dragging'), 0);
+            event.dataTransfer.setData('text/plain', event.target.dataset.taskId);
+            event.dataTransfer.effectAllowed = 'move';
+        }
+
+        function handleDragEnd(event) {
+            if (draggedItem) { draggedItem.classList.remove('dragging'); }
+            columns.forEach(col => col.classList.remove('drag-over'));
+            draggedItem = null;
+        }
+
+        function handleDragOver(event) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+            const column = event.target.closest('.kanban-column');
+            if (column && !column.classList.contains('drag-over')) { // Only add if not already present
+                 columns.forEach(col => col.classList.remove('drag-over')); // Remove from others
+                 column.classList.add('drag-over');
+            }
+        }
+
+        function handleDragLeave(event) {
+            const column = event.target.closest('.kanban-column');
+            // More robust check: remove highlight if the related target is outside the column
+            if (column && (!event.relatedTarget || !column.contains(event.relatedTarget))) {
+                 column.classList.remove('drag-over');
+            }
+        }
+
+        function handleDrop(event) {
+            event.preventDefault();
+            const targetColumnElement = event.target.closest('.kanban-column');
+            columns.forEach(col => col.classList.remove('drag-over')); // Clean up highlights
+
+            if (targetColumnElement && draggedItem) {
+                const taskId = draggedItem.dataset.taskId;
+                const targetColumnId = targetColumnElement.dataset.columnId;
+                const taskIndex = allTasks.findIndex(t => t.id === taskId);
+
+                if (taskIndex > -1) {
+                    const originalColumnId = allTasks[taskIndex].column;
+                    allTasks[taskIndex].column = targetColumnId; // Update column in data
+
+                     // Determine drop position (for potential reordering within column later)
+                     // For now, just append/move conceptually. RenderTasks will handle placement.
+
+                    // Trigger confetti only if moved *into* Done
+                    if (targetColumnId === 'done' && originalColumnId !== 'done') {
+                        triggerConfetti();
+                    }
+
+                    saveTasks();
+                    renderTasks(); // Re-render to reflect the move and sorting
+                } else {
+                    console.error("Dropped task not found in data:", taskId);
+                }
+            }
+            draggedItem = null; // Reset dragged item
+        }
+
+        // --- Search and Filtering ---
+         function filterTasks(tasks, searchTerm) {
+             if (!searchTerm) return tasks; // No filter applied
+             const lowerCaseSearchTerm = searchTerm.toLowerCase();
+             return tasks.filter(task => {
+                 const textMatch = task.text.toLowerCase().includes(lowerCaseSearchTerm);
+                 const tagMatch = task.tags && task.tags.some(tag => tag.toLowerCase().includes(lowerCaseSearchTerm));
+                 return textMatch || tagMatch;
+             });
+         }
+
+         // --- Sorting ---
+         function sortTasks(tasks, sortBy) {
+             const sortedTasks = [...tasks]; // Create a copy to sort
+             switch (sortBy) {
+                 case 'priority-desc':
+                     sortedTasks.sort((a, b) => getPriorityValue(b.priority) - getPriorityValue(a.priority));
+                     break;
+                 case 'priority-asc':
+                     sortedTasks.sort((a, b) => getPriorityValue(a.priority) - getPriorityValue(b.priority));
+                     break;
+                 case 'due-date-asc':
+                     sortedTasks.sort((a, b) => {
+                         const dateA = a.dueDate ? dayjs(a.dueDate).valueOf() : Infinity;
+                         const dateB = b.dueDate ? dayjs(b.dueDate).valueOf() : Infinity;
+                         return dateA - dateB;
+                     });
+                     break;
+                 case 'due-date-desc':
+                      sortedTasks.sort((a, b) => {
+                         const dateA = a.dueDate ? dayjs(a.dueDate).valueOf() : -Infinity;
+                         const dateB = b.dueDate ? dayjs(b.dueDate).valueOf() : -Infinity;
+                         return dateB - dateA;
+                     });
+                     break;
+                 case 'name-asc':
+                     sortedTasks.sort((a, b) => a.text.localeCompare(b.text));
+                     break;
+                 case 'default': // Sort by creation time (or original order if createdAt is missing)
+                 default:
+                      sortedTasks.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+                     break;
+             }
+             return sortedTasks;
+         }
+
+
+         // --- Rendering ---
+         function renderTasks() {
+             const searchTerm = searchInput.value.trim();
+             const filteredTasks = filterTasks(allTasks, searchTerm);
+
+             columns.forEach(column => {
+                 const columnId = column.dataset.columnId;
+                 const tasksContainer = column.querySelector('.tasks-container');
+                 const sortSelect = column.querySelector('.sort-select');
+                 const sortBy = sortSelect ? sortSelect.value : 'default';
+
+                 if (!tasksContainer) {
+                     console.error(`Tasks container not found for column: ${columnId}`);
+                     return; // Skip if container missing
+                 }
+
+                 // Filter tasks for this specific column
+                 let tasksForColumn = filteredTasks.filter(task => task.column === columnId);
+
+                 // Sort tasks for this column
+                 tasksForColumn = sortTasks(tasksForColumn, sortBy);
+
+                 // Clear current tasks in the column
+                 tasksContainer.innerHTML = '';
+
+                 // Append sorted and filtered tasks
+                 if (tasksForColumn.length > 0) {
+                     tasksForColumn.forEach(task => {
+                         const taskElement = createTaskElement(task);
+                         tasksContainer.appendChild(taskElement);
+                     });
+                 } else {
+                     // Optional: Show a message if no tasks match filter/column
+                     // tasksContainer.innerHTML = '<p class="text-center text-gray-500 text-sm mt-4">No tasks found.</p>';
+                 }
+
+                 updateTaskCount(column); // Update count after rendering
+             });
+
+             initializeLucideIcons(); // Re-render icons after updating DOM
+         }
+
+         function updateTaskCount(columnElement) {
+             const countElement = columnElement.querySelector('.task-count');
+             const tasksContainer = columnElement.querySelector('.tasks-container');
+             if (countElement && tasksContainer) {
+                 const count = tasksContainer.children.length;
+                 countElement.textContent = count;
+             }
+         }
+
+
+        // --- Confetti Trigger ---
+        function triggerConfetti() {
+            myConfetti({ particleCount: 150, spread: 90, origin: { y: 0.6 } });
+        }
+
+        // --- Local Storage (User Specific) ---
+        function getStorageKey() {
+            const user = localStorage.getItem('kanbanUser');
+            return user ? `kanbanTasks_v2_${user}` : null; // Added versioning
+        }
+
+        function saveTasks() {
+            const storageKey = getStorageKey();
+            if (!storageKey) return;
+            localStorage.setItem(storageKey, JSON.stringify(allTasks)); // Save the master list
+        }
+
+        function loadTasks() {
+            const storageKey = getStorageKey();
+            if (!storageKey) { allTasks = []; renderTasks(); return; }
+
+            const savedTasks = localStorage.getItem(storageKey);
+            if (savedTasks) {
+                try {
+                    allTasks = JSON.parse(savedTasks).map(task => ({
+                         ...task,
+                         // Ensure essential fields exist, provide defaults if loading older data
+                         priority: task.priority || 'medium',
+                         tags: task.tags || [],
+                         createdAt: task.createdAt || Date.now() // Add createdAt if missing
+                     }));
+                } catch (e) {
+                    console.error("Error parsing tasks from local storage:", e);
+                    allTasks = []; // Reset if parsing fails
+                    // Optionally clear corrupted storage: localStorage.removeItem(storageKey);
+                }
+            } else {
+                allTasks = []; // No saved tasks
+            }
+            renderTasks(); // Render tasks after loading
+        }
+
+        // --- Utility Functions ---
+         function isValidHttpUrl(string) {
+             let url;
+             try {
+                 url = new URL(string);
+             } catch (_) {
+                 return false;
+             }
+             return url.protocol === "http:" || url.protocol === "https:";
+         }
+
+         function initializeLucideIcons() {
+             // Debounce or ensure this doesn't run excessively if called rapidly
+             if (typeof lucide !== 'undefined') {
+                 lucide.createIcons();
+             }
+         }
+
+        // --- Event Listeners ---
+        authForm.addEventListener('submit', handleAuthSubmit);
+        authSwitchButton.addEventListener('click', switchAuthMode);
+        logoutButton.addEventListener('click', handleLogout);
+
+        addTaskButton.addEventListener('click', addTask);
+        // Allow adding task with Enter key in the main input
+        newTaskInput.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') {
+                 event.preventDefault(); // Prevent potential form submission if wrapped
+                 addTask();
+            }
+        });
+
+        searchInput.addEventListener('input', () => renderTasks()); // Filter as user types
+
+        columns.forEach(column => {
+            column.addEventListener('dragover', handleDragOver);
+            column.addEventListener('dragleave', handleDragLeave);
+            column.addEventListener('drop', handleDrop);
+             // Add listener for sorting changes
+             const sortSelect = column.querySelector('.sort-select');
+             if (sortSelect) {
+                 sortSelect.addEventListener('change', () => renderTasks());
+             }
+        });
+
+        // Modal listeners
+        saveEditButton.addEventListener('click', saveTaskChanges);
+        cancelEditButton.addEventListener('click', closeEditModal);
+        closeEditModalButton.addEventListener('click', closeEditModal); // Added close button listener
+        editModal.addEventListener('click', (event) => { // Close on backdrop click
+            if (event.target === editModal) closeEditModal();
+        });
+
+         // Image Preview Modal Listeners
+         closeImagePreviewButton.addEventListener('click', closeImagePreview);
+         imagePreviewModal.addEventListener('click', (event) => { // Close on backdrop click
+             if (event.target === imagePreviewModal) closeImagePreview();
+         });
+
+
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+             checkLoginState(); // Check login status on load
+         });
+
+    </script>
+
+</body>
+</html>
